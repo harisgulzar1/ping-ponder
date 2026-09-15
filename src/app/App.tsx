@@ -10,6 +10,7 @@ import Transcript from "./components/Transcript";
 import { RobotAvatar } from "./components/RobotAvatar";
 import BottomToolbar from "./components/BottomToolbar";
 import ConversationStage from "./components/ConversationStage";
+import LatencyPanel from "./components/LatencyPanel";
 
 // Types
 import { SessionStatus } from "@/app/types";
@@ -44,6 +45,10 @@ const sdkScenarioMap: Record<string, RealtimeAgent[]> = {
 
 import useAudioDownload from "./hooks/useAudioDownload";
 import { useHandleSessionHistory } from "./hooks/useHandleSessionHistory";
+import useTurnLatency from "./hooks/useTurnLatency";
+
+/** Scenario keys that take part in the sequential-vs-parallel comparison. */
+const TRAVEL_SCENARIOS = new Set(["travelPlanning", "fastTravelPlanning"]);
 
 function App() {
   const searchParams = useSearchParams()!;
@@ -59,6 +64,11 @@ function App() {
   // before the offer/answer negotiation.
   // ---------------------------------------------------------------------
   const urlCodec = searchParams.get("codec") || "opus";
+
+  // Which scenario (and therefore which pipeline) is active. Resolved once here
+  // so the session context, the metrics and the UI all agree on it.
+  const scenarioKey = searchParams.get("agentConfig") || "default";
+  const isTravelScenario = TRAVEL_SCENARIOS.has(scenarioKey);
 
   // Agents SDK doesn't currently support codec selection so it is now forced 
   // via global codecPatch at module load 
@@ -168,6 +178,16 @@ function App() {
     [sdkAudioElement],
   );
 
+  // Measures how long the user waits: time to first audio, and -- the headline
+  // number for the sequential-vs-parallel comparison -- time until the answer
+  // is finished. Both span WebRTC transport events, so they can only be taken
+  // in the browser; they are posted to /api/metrics from the hook.
+  const {
+    handleTransportEvent: recordTurnLatency,
+    markTextTurnStart,
+    latest: latestTurnLatency,
+  } = useTurnLatency({ sessionId, scenario: scenarioKey });
+
   const {
     connect,
     disconnect,
@@ -181,7 +201,10 @@ function App() {
       handoffTriggeredRef.current = true;
       setSelectedAgentName(agentName);
     },
-    onTransportEvent: (event) => handleAvatarEvents(event),
+    onTransportEvent: (event) => {
+      handleAvatarEvents(event);
+      if (isTravelScenario) recordTurnLatency(event);
+    },
   });
 
   const [sessionStatus, setSessionStatus] =
@@ -213,31 +236,32 @@ function App() {
     setSessionId(id);
   }, [sessionId]);
 
+  // Reset planning state on first load of a session AND whenever the scenario
+  // changes. Without the scenario check, switching from the sequential arm to
+  // the parallel one inherited a fully populated plan, so the parallel agent had
+  // nothing left to do and the comparison was meaningless.
   useEffect(() => {
     if (!sessionId || typeof window === "undefined") return;
+    if (!isTravelScenario) return;
 
-    const initKey = `travelStateInitialized_${sessionId}`;
-    const alreadyInitialized = localStorage.getItem(initKey) === "true";
-    if (alreadyInitialized) return;
+    const scenarioKeyName = `travelStateScenario_${sessionId}`;
+    if (localStorage.getItem(scenarioKeyName) === scenarioKey) return;
 
-    const resetStateForSession = async () => {
+    const resetStateForScenario = async () => {
       try {
-        await fetch("/api/update-state", {
+        await fetch("/api/state", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sessionId,
-            action: "resetState",
-          }),
+          body: JSON.stringify({ sessionId, action: "resetState" }),
         });
-        localStorage.setItem(initKey, "true");
+        localStorage.setItem(scenarioKeyName, scenarioKey);
       } catch (err) {
-        console.error("Failed to reset server state for new session", err);
+        console.error("Failed to reset server state for scenario", err);
       }
     };
 
-    resetStateForSession();
-  }, [sessionId]);
+    void resetStateForScenario();
+  }, [sessionId, scenarioKey, isTravelScenario]);
 
   // Initialize the recording hook.
   const { startRecording, stopRecording, downloadRecording } =
@@ -319,7 +343,8 @@ function App() {
 
   const connectToRealtime = async () => {
     if (!sessionId) return;
-    const agentSetKey = searchParams.get("agentConfig") || "default";
+    // Same value the component resolved at the top; no need to re-read the URL.
+    const agentSetKey = scenarioKey;
     if (sdkScenarioMap[agentSetKey]) {
       if (sessionStatus !== "DISCONNECTED") return;
       setSessionStatus("CONNECTING");
@@ -339,13 +364,17 @@ function App() {
           reorderedAgents.unshift(agent);
         }
 
-  const companyName = agentSetKey === 'fastTravelPlanning'
-    ? customerServiceRetailCompanyName
-    : agentSetKey === 'travelPlanning'
-    ? travelPlanningCompanyName
-    : agentSetKey === 'fastTravelPlanning'
-    ? fastTravelPlanningCompanyName
-    : chatSupervisorCompanyName;
+        // Previously this tested 'fastTravelPlanning' first and returned the
+        // retail company name, making the later fastTravelPlanning branch dead
+        // and mislabelling the parallel scenario's guardrail.
+        const companyNameByScenario: Record<string, string> = {
+          travelPlanning: travelPlanningCompanyName,
+          fastTravelPlanning: fastTravelPlanningCompanyName,
+          customerServiceRetail: customerServiceRetailCompanyName,
+          chatSupervisor: chatSupervisorCompanyName,
+        };
+        const companyName =
+          companyNameByScenario[agentSetKey] ?? chatSupervisorCompanyName;
         const guardrail = createModerationGuardrail(companyName);
 
         await connect({
@@ -356,6 +385,9 @@ function App() {
           extraContext: {
             addTranscriptBreadcrumb,
             sessionId,
+            // Lets tools attribute their metrics to the right pipeline without
+            // having to sniff the URL.
+            scenario: agentSetKey,
           },
         });
       } catch (err) {
@@ -421,6 +453,9 @@ function App() {
   const handleSendTextMessage = () => {
     if (!userText.trim()) return;
     interrupt();
+
+    // A typed turn produces no speech_stopped event, so start the clock here.
+    if (isTravelScenario) markTextTurnStart();
 
     try {
       sendUserText(userText.trim());
@@ -596,7 +631,8 @@ function App() {
     };
   }, [sdkAudioElement]);
 
-  const agentSetKey = searchParams.get("agentConfig") || "default";
+  // Single source for the active scenario, resolved at the top of the component.
+  const agentSetKey = scenarioKey;
 
   return (
     <div className="text-base flex flex-col h-screen bg-gray-100 text-gray-800 relative">
@@ -618,6 +654,33 @@ function App() {
             Realtime API <span className="text-gray-500">Agents</span>
           </div>
         </div>
+
+        {/* Live readout of the metric the project is about. */}
+        {isTravelScenario && (
+          <div className="flex items-center gap-2 text-sm font-normal">
+            <span
+              className={`px-2 py-1 rounded-full text-xs font-medium border ${
+                scenarioKey === "fastTravelPlanning"
+                  ? "bg-orange-50 text-orange-900 border-orange-200"
+                  : "bg-blue-50 text-blue-900 border-blue-200"
+              }`}
+            >
+              {scenarioKey === "fastTravelPlanning"
+                ? "parallel pipeline"
+                : "sequential pipeline"}
+            </span>
+            <span
+              className="text-gray-600 tabular-nums"
+              title="End of your speech to the assistant finishing its answer"
+            >
+              last answer:{" "}
+              {latestTurnLatency
+                ? `${(latestTurnLatency.completionMs / 1000).toFixed(2)}s`
+                : "--"}
+            </span>
+          </div>
+        )}
+
         <div className="flex items-center">
           <label className="flex items-center text-base gap-1 mr-2 font-medium">
             Scenario
@@ -693,10 +756,11 @@ function App() {
             }
           />
           
-        {/* Show conversation stage for travel planning agents */}
-        {(agentSetKey === 'travelPlanning' || agentSetKey === 'fastTravelPlanning') && sessionStatus === "CONNECTED" && sessionId && (
-          <div className="mt-2">
+        {/* Pipeline state and latency, for the travel planning scenarios only. */}
+        {isTravelScenario && sessionStatus === "CONNECTED" && sessionId && (
+          <div className="mt-2 flex flex-col gap-2 max-h-[45%] overflow-y-auto">
             <ConversationStage sessionId={sessionId} />
+            <LatencyPanel sessionId={sessionId} scenario={scenarioKey} />
           </div>
         )}
         </div>

@@ -22,6 +22,11 @@
 .DS_Store
 *.pem
 
+# Generated at runtime by the state store and metrics recorder. These change on
+# every conversation turn, so tracking them makes every demo a dirty worktree.
+/conversation_logs/*
+!/conversation_logs/.gitkeep
+
 # debug
 npm-debug.log*
 yarn-debug.log*

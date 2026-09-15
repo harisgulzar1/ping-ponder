@@ -1,30 +1,37 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ServerStateManager } from '@/app/agentConfigs/TravelPlanningAgent/serverStateManager';
 
+import * as store from '@/app/agentConfigs/TravelPlanningAgent/stateStore';
+import { deriveState } from '@/app/agentConfigs/TravelPlanningAgent/stateTypes';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+/**
+ * GET /api/conversation-stage?sessionId=X
+ *
+ * Kept for backwards compatibility with the original response shape.
+ * New code should use /api/state, which also returns plan gaps and job status.
+ */
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const sessionId = searchParams.get('sessionId') || 'default';
-    
-    const stateManager = new ServerStateManager(sessionId);
-    const state = await stateManager.readState();
-    const emptySlots = await stateManager.getEmptySlots();
-    const isComplete = await stateManager.isIntentComplete();
-    const phase = await stateManager.getCurrentPhase();
-    const intentStatus = await stateManager.getIntentStatus();
-    
+
+    const state = await store.readState(sessionId);
+    const derived = deriveState(state);
+
     return NextResponse.json({
-      phase,
-      intentStatus,
-      emptySlots,
-      isComplete,
-      state
+      phase: derived.phase,
+      intentStatus: derived.intentStatus,
+      emptySlots: derived.emptySlots,
+      isComplete: derived.isComplete,
+      state,
     });
   } catch (error) {
-    console.error('Error fetching conversation stage:', error);
+    console.error('[api/conversation-stage] GET failed', error);
     return NextResponse.json(
       { error: 'Failed to fetch conversation stage' },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

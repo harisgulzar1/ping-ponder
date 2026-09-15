@@ -1,5 +1,10 @@
 # Realtime API Agents Demo
 
+> **This fork adds Ping/Ponder**, a parallel-vs-sequential latency experiment
+> built on top of the patterns below. See **[PING_PONDER.md](PING_PONDER.md)**
+> for its architecture, how latency is measured, and how to run the A/B —
+> that is the part of this repo you probably came here for.
+
 This is a demonstration of more advanced patterns for voice agents, using the OpenAI Realtime API and the OpenAI Agents SDK. 
 
 ## About the OpenAI Agents SDK
