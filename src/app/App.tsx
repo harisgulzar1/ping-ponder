@@ -345,6 +345,12 @@ function App() {
       return null;
     }
 
+    // Which API minted the key determines which WebRTC protocol the SDK must
+    // speak; a GA key against a beta-era SDK fails later, during SDP exchange.
+    console.info(
+      `[session] key minted via ${data.endpoint} for model ${data.model}`,
+    );
+
     return { key: data.client_secret.value, model: data.model };
   };
 
