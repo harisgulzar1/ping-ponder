@@ -325,7 +325,9 @@ function App() {
     }
   }, [isPTTActive]);
 
-  const fetchEphemeralKey = async (): Promise<string | null> => {
+  const fetchEphemeralKey = async (): Promise<
+    { key: string; model?: string } | null
+  > => {
     logClientEvent({ url: "/session" }, "fetch_session_token_request");
     const tokenResponse = await fetch("/api/session");
     const data = await tokenResponse.json();
@@ -333,12 +335,17 @@ function App() {
 
     if (!data.client_secret?.value) {
       logClientEvent(data, "error.no_ephemeral_key");
-      console.error("No ephemeral key provided by the server");
+      // The route reports the upstream OpenAI error verbatim, so print it
+      // rather than the generic message that used to hide the cause.
+      console.error(
+        data.error ?? "No ephemeral key provided by the server",
+        data.attempts ?? data,
+      );
       setSessionStatus("DISCONNECTED");
       return null;
     }
 
-    return data.client_secret.value;
+    return { key: data.client_secret.value, model: data.model };
   };
 
   const connectToRealtime = async () => {
@@ -353,8 +360,8 @@ function App() {
       cleanSdkAudioElements();
 
       try {
-        const EPHEMERAL_KEY = await fetchEphemeralKey();
-        if (!EPHEMERAL_KEY) return;
+        const ephemeral = await fetchEphemeralKey();
+        if (!ephemeral) return;
 
         // Ensure the selectedAgentName is first so that it becomes the root
         const reorderedAgents = [...sdkScenarioMap[agentSetKey]];
@@ -378,7 +385,11 @@ function App() {
         const guardrail = createModerationGuardrail(companyName);
 
         await connect({
-          getEphemeralKey: async () => EPHEMERAL_KEY,
+          getEphemeralKey: async () => ephemeral.key,
+          // The key is minted for a specific model; connecting with a
+          // different one is a mismatch waiting to happen, so the server's
+          // choice is the single source of truth.
+          model: ephemeral.model,
           initialAgents: reorderedAgents,
           audioElement: sdkAudioElement,
           outputGuardrails: [guardrail],

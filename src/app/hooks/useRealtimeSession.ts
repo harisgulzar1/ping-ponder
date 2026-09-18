@@ -22,7 +22,15 @@ export interface ConnectOptions {
   audioElement?: HTMLAudioElement;
   extraContext?: Record<string, any>;
   outputGuardrails?: any[];
+  /**
+   * Model to connect with. Comes from /api/session, which reports the model it
+   * minted the key for -- so the key and the connection cannot disagree.
+   */
+  model?: string;
 }
+
+/** Only used if /api/session did not report a model. */
+const FALLBACK_REALTIME_MODEL = 'gpt-realtime-2.1';
 
 export function useRealtimeSession(callbacks: RealtimeSessionCallbacks = {}) {
   const sessionRef = useRef<RealtimeSession | null>(null);
@@ -118,6 +126,7 @@ export function useRealtimeSession(callbacks: RealtimeSessionCallbacks = {}) {
       audioElement,
       extraContext,
       outputGuardrails,
+      model,
     }: ConnectOptions) => {
       if (sessionRef.current) return; // already connected
 
@@ -140,7 +149,7 @@ export function useRealtimeSession(callbacks: RealtimeSessionCallbacks = {}) {
             return pc;
           },
         }),
-        model: 'gpt-4o-realtime-preview-2025-06-03',
+        model: model ?? FALLBACK_REALTIME_MODEL,
         config: {
           inputAudioFormat: audioFormat,
           outputAudioFormat: audioFormat,
