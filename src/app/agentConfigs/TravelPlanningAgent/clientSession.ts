@@ -10,6 +10,8 @@
 // localStorage, which App.tsx always populates. That makes session identity
 // independent of the SDK's internal context wrapping.
 
+import { getStoredItem } from '@/app/lib/safeStorage';
+
 export const SESSION_STORAGE_KEY = 'travelSessionId';
 
 export type ScenarioKey = 'travelPlanning' | 'fastTravelPlanning' | string;
@@ -32,10 +34,10 @@ export function resolveSessionId(details?: unknown): string {
   const fromContext = readFromContext(details, 'sessionId');
   if (fromContext) return fromContext;
 
-  if (typeof window !== 'undefined') {
-    const stored = window.localStorage.getItem(SESSION_STORAGE_KEY);
-    if (stored) return stored;
-  }
+  // Blocked storage must not throw here: this runs inside every agent tool
+  // call, and a raised exception would fail the tool rather than the lookup.
+  const stored = getStoredItem(SESSION_STORAGE_KEY);
+  if (stored) return stored;
 
   return 'default';
 }

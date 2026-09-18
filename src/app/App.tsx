@@ -46,6 +46,7 @@ const sdkScenarioMap: Record<string, RealtimeAgent[]> = {
 import useAudioDownload from "./hooks/useAudioDownload";
 import { useHandleSessionHistory } from "./hooks/useHandleSessionHistory";
 import useTurnLatency from "./hooks/useTurnLatency";
+import { getStoredItem, setStoredItem } from "./lib/safeStorage";
 
 /** Scenario keys that take part in the sequential-vs-parallel comparison. */
 const TRAVEL_SCENARIOS = new Set(["travelPlanning", "fastTravelPlanning"]);
@@ -216,8 +217,7 @@ function App() {
   const [isPTTUserSpeaking, setIsPTTUserSpeaking] = useState<boolean>(false);
   const [isAudioPlaybackEnabled, setIsAudioPlaybackEnabled] = useState<boolean>(
     () => {
-      if (typeof window === 'undefined') return true;
-      const stored = localStorage.getItem('audioPlaybackEnabled');
+      const stored = getStoredItem('audioPlaybackEnabled');
       return stored ? stored === 'true' : true;
     },
   );
@@ -230,9 +230,9 @@ function App() {
 
   useEffect(() => {
     if (sessionId || typeof window === "undefined") return;
-    const storedSession = localStorage.getItem("travelSessionId");
+    const storedSession = getStoredItem("travelSessionId");
     const id = storedSession || uuidv4();
-    localStorage.setItem("travelSessionId", id);
+    setStoredItem("travelSessionId", id);
     setSessionId(id);
   }, [sessionId]);
 
@@ -245,7 +245,7 @@ function App() {
     if (!isTravelScenario) return;
 
     const scenarioKeyName = `travelStateScenario_${sessionId}`;
-    if (localStorage.getItem(scenarioKeyName) === scenarioKey) return;
+    if (getStoredItem(scenarioKeyName) === scenarioKey) return;
 
     const resetStateForScenario = async () => {
       try {
@@ -254,7 +254,7 @@ function App() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ sessionId, action: "resetState" }),
         });
-        localStorage.setItem(scenarioKeyName, scenarioKey);
+        setStoredItem(scenarioKeyName, scenarioKey);
       } catch (err) {
         console.error("Failed to reset server state for scenario", err);
       }
@@ -531,35 +531,30 @@ function App() {
   };
 
   useEffect(() => {
-    const storedPushToTalkUI = localStorage.getItem("pushToTalkUI");
+    const storedPushToTalkUI = getStoredItem("pushToTalkUI");
     if (storedPushToTalkUI) {
       setIsPTTActive(storedPushToTalkUI === "true");
     }
-    const storedAvatarVisible = localStorage.getItem("avatarExpanded");
+    const storedAvatarVisible = getStoredItem("avatarExpanded");
     if (storedAvatarVisible) {
       setIsAvatarVisible(storedAvatarVisible === "true");
     }
-    const storedAudioPlaybackEnabled = localStorage.getItem(
-      "audioPlaybackEnabled"
-    );
+    const storedAudioPlaybackEnabled = getStoredItem("audioPlaybackEnabled");
     if (storedAudioPlaybackEnabled) {
       setIsAudioPlaybackEnabled(storedAudioPlaybackEnabled === "true");
     }
   }, []);
 
   useEffect(() => {
-    localStorage.setItem("pushToTalkUI", isPTTActive.toString());
+    setStoredItem("pushToTalkUI", isPTTActive.toString());
   }, [isPTTActive]);
 
   useEffect(() => {
-    localStorage.setItem("avatarExpanded", isAvatarVisible.toString());
+    setStoredItem("avatarExpanded", isAvatarVisible.toString());
   }, [isAvatarVisible]);
 
   useEffect(() => {
-    localStorage.setItem(
-      "audioPlaybackEnabled",
-      isAudioPlaybackEnabled.toString()
-    );
+    setStoredItem("audioPlaybackEnabled", isAudioPlaybackEnabled.toString());
   }, [isAudioPlaybackEnabled]);
 
   useEffect(() => {
