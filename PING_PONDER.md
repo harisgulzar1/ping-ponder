@@ -1,5 +1,64 @@
 # Ping / Ponder: parallel vs sequential voice-agent pipelines
 
+## Demo
+
+The same travel-planning conversation, run live through both pipelines on a
+local machine against the OpenAI Realtime and Responses APIs. The user plans a
+trip to Africa by voice; the only thing that differs between the two runs is
+whether the reasoning agent blocks the speech agent or runs alongside it.
+
+**The parallel pipeline answered 1.53× faster on average** — 6.07s versus 9.27s
+from the end of the user's sentence to a finished answer, a saving of 3.20s per
+turn (34.6% reduction). That is an end-to-end figure: it includes the reasoning
+delay that the sequential pipeline makes the user sit through.
+
+### The running app
+
+![The parallel pipeline mid-conversation: transcript, confirmed intent slots, and live agent state](public/demo/overview.png)
+
+The `fastTravelPlanning` scenario mid-conversation. The header badge shows which
+pipeline is active and the time the last answer took. Intent slots fill in as
+the user speaks — destination, dates, duration, budget and party size all
+confirmed — while the avatar panel reports connection and speaking state.
+
+### Headline comparison
+
+![Latency panel showing 1.53x faster to answer: sequential 9.27s versus parallel 6.07s](public/demo/latency%20overview.png)
+
+Mean time from the end of the user's sentence to a finished answer. This is the
+metric that matters: time-to-first-audio is deliberately fast in both arms,
+because the sequential agent opens with a filler phrase before it blocks.
+
+### Per-pipeline detail
+
+![KPI breakdown comparing sequential and parallel across turns, percentiles, reasoning time, handoff and plan items](public/demo/latency%20details.png)
+
+The breakdown is where the architecture shows itself:
+
+| | Sequential | Parallel |
+|---|---|---|
+| answer p50 | 8.79s | **5.88s** |
+| answer p95 | 16.10s | **6.89s** |
+| reasoning | 3.81s | 8.52s |
+| handoff | — | **8ms** |
+| plan items | 6 | **10** |
+
+Three things stand out. The **tail collapses**: the worst-case turn goes from
+16.10s to 6.89s, because a slow reasoning run no longer blocks the reply.
+**Handoff costs 8ms** — that is the entire time the speech agent waits, against
+a full reasoning run in the sequential arm. And the parallel pipeline did *more*
+thinking, not less (8.52s of reasoning versus 3.81s) while producing a **richer
+plan** — 10 items against 6. It is faster and more thorough at the same time,
+because the reasoning happens in time the user was spending talking anyway.
+
+One caveat on reading these numbers: this is a live voice demo, so the two arms
+saw 5 and 3 turns respectively and the phrasing was not identical between runs.
+It demonstrates the effect; it does not control for it. The
+[scripted A/B harness](#scripted-ab-reproducible) exists for that, and replays
+one fixed script through both pipelines.
+
+---
+
 This project tests one claim:
 
 > Running a slow reasoning agent **in parallel** with a fast speech agent gives
