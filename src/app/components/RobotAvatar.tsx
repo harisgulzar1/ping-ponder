@@ -47,8 +47,6 @@ export const RobotAvatar: React.FC<RobotAvatarProps> = ({
     setCurrentImage("moving");
   }, [state, toggleSpeed, isSpeaking]);
 
-  const getImageSrc = () => (currentImage === "still" ? stillImage : movingImage);
-
   return (
     <div className="flex flex-col items-center gap-3">
       <div
@@ -85,8 +83,11 @@ export const RobotAvatar: React.FC<RobotAvatarProps> = ({
 
         <div
           style={{
-            width: "200px",
-            height: "200px",
+            // Was hardcoded 200px, which overflowed the box once the side panel
+            // started rendering the avatar at a smaller size.
+            width: `${Math.round(size * 0.95)}px`,
+            height: `${Math.round(size * 0.95)}px`,
+            position: "relative",
             borderRadius: "50%",
             background:
               state === "speaking"
@@ -112,19 +113,30 @@ export const RobotAvatar: React.FC<RobotAvatarProps> = ({
             overflow: "hidden",
           }}
         >
-          <Image
-            src={getImageSrc()}
-            alt="Robot Avatar"
-            width={200}
-            height={200}
-            style={{
-              width: "100%",
-              height: "100%",
-              objectFit: "cover",
-              borderRadius: "50%",
-              transition: `opacity ${toggleSpeed}ms ease-in-out`,
-            }}
-          />
+          {/* Both frames stay mounted and we cross-fade opacity. Swapping the
+              `src` of a single next/image instead meant a fresh decode on every
+              toggle, which at this interval never completed -- so the avatar
+              sat on one frame and looked frozen. */}
+          {(["moving", "still"] as const).map((frame) => (
+            <Image
+              key={frame}
+              src={frame === "still" ? stillImage : movingImage}
+              alt=""
+              width={200}
+              height={200}
+              priority
+              style={{
+                position: "absolute",
+                inset: 0,
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+                borderRadius: "50%",
+                opacity: currentImage === frame ? 1 : 0,
+                transition: `opacity ${Math.round(toggleSpeed / 2)}ms linear`,
+              }}
+            />
+          ))}
         </div>
       </div>
 

@@ -10,6 +10,9 @@ import { record } from '@/app/lib/metrics';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+// A bulk plan build is a long tool loop; the default request budget is too
+// short for it once this is deployed anywhere with one.
+export const maxDuration = 300;
 
 /**
  * POST /api/supervisor

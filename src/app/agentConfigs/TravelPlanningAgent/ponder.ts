@@ -32,18 +32,6 @@ import { record } from '@/app/lib/metrics';
 
 export const PONDER_MODEL = process.env.PONDER_MODEL || 'gpt-4.1';
 
-/**
- * Simulated network latency for the stubbed `webSearch` tool.
- *
- * The lookup DBs answer instantly, which would make Ponder unrealistically
- * cheap and understate the latency the parallel pipeline hides. A real
- * deployment would call a live search API here; this models that cost so the
- * comparison is meaningful. Results are always tagged `simulated: true`.
- */
-const SIMULATED_SEARCH_LATENCY_MS = Number(
-  process.env.PONDER_SIMULATED_TOOL_LATENCY_MS ?? 500,
-);
-
 /** Hard stop on the reasoning loop so a confused model cannot spin forever. */
 const MAX_TOOL_ITERATIONS = 8;
 
@@ -123,9 +111,18 @@ Build the ENTIRE plan in this one run:
 4. If the lookup DB has nothing for this destination, use webSearch.
 5. Call updatePhase to move to plan_sharing.
 
-Only then, finish with what the speech agent will read out VERBATIM: two or
-three sentences of natural prose, no bulleted lists, naming a few highlights and
-summarizing the rest.
+Only then, write what the speech agent will read out VERBATIM. The user has been
+sitting in silence waiting for this, so actually DELIVER the plan -- do not
+merely announce that it is ready:
+
+- Walk them through it naturally: where they will be based, a few things to do,
+  somewhere to eat, where to stay, and anything time-sensitive.
+- Name the specific items you just added to the plan. Never say "I've put
+  together some options" without saying what they are.
+- Five to eight sentences of spoken prose. No bulleted lists, no headings, no
+  markdown -- this is read aloud.
+- Finish by inviting a reaction: ask whether they want to change anything or
+  hear more about any part of it.
 ${SHARED_DOMAIN_RULES}`;
 
 // ---------------------------------------------------------------------------
@@ -385,15 +382,14 @@ function estimateBudget(args: any) {
   };
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
 /**
- * Stubbed search. Returns plausible, clearly-labelled placeholders after a
- * simulated network delay. Replace with a real search API for production use.
+ * Stubbed search. Returns plausible, clearly-labelled placeholders.
+ *
+ * No artificial delay: the real model round trips and the sheer number of tool
+ * calls a full plan needs already produce plenty of latency to demonstrate.
+ * Replace with a real search API for production use.
  */
 async function webSearch(query: string, searchType: string) {
-  await sleep(SIMULATED_SEARCH_LATENCY_MS);
-
   const subject = query.replace(/\b(top|best|in|for|and|the)\b/gi, '').trim() || 'this destination';
   const templates: Record<string, string[]> = {
     attractions: ['Historic old town', 'Main national museum', 'Central viewpoint walk'],

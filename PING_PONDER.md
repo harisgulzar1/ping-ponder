@@ -291,17 +291,15 @@ agent tool. `stateTypes.ts` exists to give both sides shared types without that.
 |---|---|---|
 | `OPENAI_API_KEY` | — | required |
 | `PONDER_MODEL` | `gpt-4.1` | Ponder's model |
-| `PONDER_SIMULATED_TOOL_LATENCY_MS` | `500` | see below |
 
 ## Honest limitations
 
 - **`webSearch` is a stub.** It returns labelled placeholders
-  (`simulated: true`) after a configurable delay. The lookup DBs answer
-  instantly, which would make Ponder unrealistically cheap and *understate* the
-  latency the parallel pipeline hides; the delay models a real search API. The
-  genuine reasoning latency (a multi-turn `gpt-4.1` tool loop, typically
-  seconds) is real and dominates either way. Swap in a real search API before
-  publishing numbers.
+  (`simulated: true`) with no artificial delay. All the latency you see is real:
+  model round trips plus the sheer number of tool calls a full plan requires.
+  Swap in a real search API before publishing numbers — doing so would widen the
+  gap, not narrow it, since the baseline makes every one of those calls while
+  the user waits.
 - **Job registry is in-memory and single-process.** Fine for one dev server;
   a multi-instance deployment needs a real queue.
 - **At most one in-flight Ponder job per session.** Concurrent runs would fight

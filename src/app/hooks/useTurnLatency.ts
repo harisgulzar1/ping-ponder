@@ -61,8 +61,12 @@ const RESPONSE_CONTINUES_EVENTS = new Set([
  * Safety net for a turn that never completes -- a tool that throws, or a
  * dropped connection. The sample is discarded rather than recorded, because a
  * wrong number is worse than a missing one.
+ *
+ * Generous, because the sequential baseline's single handoff turn legitimately
+ * runs for a minute or more while it builds the whole plan. That turn IS the
+ * measurement, so the net must not cut it short.
  */
-const TURN_ABANDON_MS = 150_000;
+const TURN_ABANDON_MS = 300_000;
 
 export interface TurnSample {
   /** End of user speech -> assistant done talking. The headline number. */
@@ -85,7 +89,7 @@ export interface UseTurnLatencyOptions {
 export function useTurnLatency({
   sessionId,
   scenario,
-  maxPlausibleMs = 120_000,
+  maxPlausibleMs = 240_000,
 }: UseTurnLatencyOptions) {
   const turnStartRef = useRef<number | null>(null);
   const firstResponseRef = useRef<number | null>(null);
