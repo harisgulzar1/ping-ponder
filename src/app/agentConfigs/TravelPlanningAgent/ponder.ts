@@ -34,6 +34,26 @@ import { record } from '@/app/lib/metrics';
 
 export const PONDER_MODEL = process.env.PONDER_MODEL || 'gpt-4.1';
 
+/**
+ * How deep the BACKGROUND pipeline will take each category once the minimum is
+ * met.
+ *
+ * PLAN_MIN_ITEMS only defines "complete enough to present". The parallel arm
+ * has spare wall-clock time the sequential arm does not -- the user is still
+ * talking -- so it keeps going and deepens the plan instead of idling. This is
+ * the quality half of the parallel argument: not just the same plan sooner, but
+ * a better one for the same conversation.
+ */
+const PLAN_ENRICH_TARGET: Record<PlanCategory, number> = {
+  cities: 3,
+  attractions: 8,
+  food: 5,
+  itinerary: 3,
+  accommodation: 4,
+  events: 3,
+  other: 0,
+};
+
 /** Hard stop on the reasoning loop so a confused model cannot spin forever. */
 const MAX_TOOL_ITERATIONS = 8;
 
@@ -93,7 +113,14 @@ Your job is to make state as complete as possible, as fast as possible:
 3. Write each finding with addPlanItem(status="proposed"). Aim for at least
    3 attractions, 2 food, 2 accommodation, 1 city, 1 itinerary, 1 event.
 4. If the lookup DB has nothing for this destination, use webSearch.
-5. When all required intent slots are filled, call updatePhase to move to
+5. If the destination is a REGION rather than a country ("Africa", "Europe"),
+   shortlist countries first, then immediately look up attractions and food FOR
+   THOSE COUNTRIES. Do not stop at the shortlist -- that leaves the user with a
+   list of countries and no plan.
+6. Once the minimums are met, keep going: more attractions in the cities you
+   picked, more food, more places to stay. You are not on the critical path, so
+   depth here is free.
+7. When all required intent slots are filled, call updatePhase to move to
    plan_sharing.
 
 Finish with one short sentence summarizing what you added. Do not address the
@@ -438,22 +465,54 @@ export async function autoPopulatePlan(sessionId: string): Promise<number> {
     }
   };
 
-  // Attractions and cities come straight out of the DB when we know the country.
-  const dbAttractions = lookupAttractions({ country: destination, season });
+  // A region-level destination ("Africa", "Europe", "Southeast Asia") matches no
+  // country in the DB, so every lookup keyed on it comes back empty. The model
+  // shortlists concrete countries into `cities`, so treat those as candidate
+  // countries too -- otherwise a continent-level trip gets a country shortlist
+  // and then nothing else, forever.
+  const shortlisted = state.plan_sharing.cities.map((item) => item.value);
+  const candidateCountries = [destination, ...shortlisted].filter(Boolean);
+
+  let dbAttractions = lookupAttractions({ country: destination, season });
+  if (dbAttractions.length === 0) {
+    for (const candidate of shortlisted) {
+      dbAttractions = dbAttractions.concat(lookupAttractions({ country: candidate, season }));
+    }
+  }
+
   if (gaps.has('attractions')) {
     for (const attraction of dbAttractions.slice(0, PLAN_MIN_ITEMS.attractions)) {
       await add('attractions', attraction.name);
     }
+    // Same safety net accommodation and events already had. Without it, a
+    // destination the DB does not cover leaves this category empty for good.
+    if (dbAttractions.length === 0) {
+      const search = await webSearch(`top attractions in ${destination}`, 'attractions');
+      for (const result of search.results.slice(0, PLAN_MIN_ITEMS.attractions)) {
+        await add('attractions', result);
+      }
+    }
   }
+
   if (gaps.has('cities')) {
     const cities = Array.from(new Set(dbAttractions.map((a) => a.city))).slice(0, 2);
     for (const city of cities.length > 0 ? cities : [destination]) {
       await add('cities', city);
     }
   }
+
   if (gaps.has('food')) {
-    for (const food of lookupFood({ country: destination }).slice(0, PLAN_MIN_ITEMS.food)) {
+    const foods = candidateCountries
+      .flatMap((country) => lookupFood({ country }))
+      .slice(0, PLAN_MIN_ITEMS.food);
+    for (const food of foods) {
       await add('food', `${food.cuisineType}: ${food.dishExamples.slice(0, 2).join(', ')}`);
+    }
+    if (foods.length === 0) {
+      const search = await webSearch(`typical food in ${destination}`, 'food');
+      for (const result of search.results.slice(0, PLAN_MIN_ITEMS.food)) {
+        await add('food', result);
+      }
     }
   }
 
@@ -495,6 +554,83 @@ export async function autoPopulatePlan(sessionId: string): Promise<number> {
 
   // Count once at the end rather than probing the store per item: addPlanItem
   // de-duplicates, so the net delta is the only number that means anything.
+  const countAfter = deriveState(await store.readState(sessionId)).planItemCount;
+  return Math.max(0, countAfter - countBefore);
+}
+
+/**
+ * Deepen an already-complete plan using whatever is known.
+ *
+ * Only the background pipeline calls this. It walks the shortlisted cities and
+ * countries and keeps adding until each category reaches PLAN_ENRICH_TARGET.
+ * `addPlanItem` de-duplicates, so running it repeatedly across background turns
+ * accumulates rather than repeats.
+ */
+export async function enrichPlan(sessionId: string): Promise<number> {
+  const state = await store.readState(sessionId);
+  const countBefore = deriveState(state).planItemCount;
+
+  const destination = state.intent_clarification.destination.value;
+  if (!destination) return 0;
+
+  const season = state.intent_clarification.when.value || undefined;
+  const places = Array.from(
+    new Set([
+      ...state.plan_sharing.cities.map((item) => item.value),
+      destination,
+    ]),
+  ).filter(Boolean);
+
+  // Track counts locally as we go. Reading them off the snapshot taken above
+  // would give every city full headroom and blow straight past the targets.
+  const counts = {} as Record<PlanCategory, number>;
+  for (const category of PLAN_CATEGORIES) {
+    counts[category] = state.plan_sharing[category].length;
+  }
+
+  const room = (category: PlanCategory): number =>
+    PLAN_ENRICH_TARGET[category] - counts[category];
+
+  const add = async (category: PlanCategory, value: string) => {
+    try {
+      await store.addPlanItem(sessionId, category, value, 'proposed', 'ponder');
+      counts[category] += 1;
+    } catch (error) {
+      console.error(`[ponder] enrich failed for ${category}`, error);
+    }
+  };
+
+  for (const place of places) {
+    if (room('attractions') > 0) {
+      const byCity = lookupAttractions({ city: place, season });
+      const byCountry = lookupAttractions({ country: place, season });
+      for (const attraction of [...byCity, ...byCountry].slice(0, room('attractions'))) {
+        await add('attractions', attraction.name);
+      }
+    }
+
+    if (room('food') > 0) {
+      for (const food of lookupFood({ country: place }).slice(0, room('food'))) {
+        await add('food', `${food.cuisineType}: ${food.dishExamples.slice(0, 2).join(', ')}`);
+      }
+    }
+
+    if (room('accommodation') > 0) {
+      for (const option of lookupAccommodation({ city: place }).slice(0, room('accommodation'))) {
+        await add(
+          'accommodation',
+          `${option.hotelTier} in ${option.city} (~$${option.avgCostUSD}/night)`,
+        );
+      }
+    }
+
+    if (room('events') > 0) {
+      for (const event of lookupEvents({ city: place }).slice(0, room('events'))) {
+        await add('events', `${event.name} (${event.city}, month ${event.month})`);
+      }
+    }
+  }
+
   const countAfter = deriveState(await store.readState(sessionId)).planItemCount;
   return Math.max(0, countAfter - countBefore);
 }
@@ -799,6 +935,11 @@ export async function runPonder(request: PonderRequest): Promise<PonderResult> {
   try {
     await autoPopulatePlan(sessionId);
     await maybeAdvancePhase(sessionId);
+    // Background runs keep going past "complete" -- the user is still talking,
+    // so the time is free.
+    if (mode === 'async') {
+      await enrichPlan(sessionId);
+    }
   } catch (error) {
     console.error('[ponder] final autoPopulatePlan failed', error);
   }

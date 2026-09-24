@@ -33,6 +33,22 @@ const inFlight = new Map<string, string>();
 /** Completed-but-unacknowledged jobs, newest last, per session. */
 const completed = new Map<string, PonderJob[]>();
 
+/**
+ * At most one queued follow-up per session, always holding the NEWEST context.
+ *
+ * This used to be a plain drop: a kickoff arriving while a run was in flight
+ * returned `coalesced: true` and was discarded. In a real conversation the user
+ * supplies four or five slots in the time one reasoning run takes, so every slot
+ * after the first was thrown away and research only ever reflected the opening
+ * message -- the plan stalled at the country shortlist and never recovered,
+ * because nothing re-triggered once the run finished.
+ *
+ * Queueing one follow-up keeps the coalescing property (runs never pile up, and
+ * stale context is always replaced by newer) while guaranteeing the latest state
+ * actually gets researched.
+ */
+const pending = new Map<string, PonderRequest>();
+
 const MAX_COMPLETED_PER_SESSION = 20;
 
 let counter = 0;
@@ -57,8 +73,10 @@ export interface StartResult {
 export function startPonderJob(request: PonderRequest): StartResult {
   const existingId = inFlight.get(request.sessionId);
   if (existingId) {
-    // Already thinking about this session. Coalescing rather than queueing
-    // keeps the newest user context from piling up behind stale runs.
+    // Already thinking about this session. Replace any older queued request so
+    // the follow-up run carries the newest context, then let the in-flight run
+    // finish -- it will pick this up.
+    pending.set(request.sessionId, request);
     return { started: false, jobId: existingId, coalesced: true };
   }
 
@@ -108,6 +126,15 @@ export function startPonderJob(request: PonderRequest): StartResult {
         for (const old of evicted) jobs.delete(old.id);
       }
       completed.set(request.sessionId, bucket);
+
+      // Anything the user said while this run was busy is waiting here. Start
+      // it now so research keeps pace with the conversation instead of
+      // stopping at whatever was known when the first run began.
+      const queued = pending.get(request.sessionId);
+      if (queued && !inFlight.has(request.sessionId)) {
+        pending.delete(request.sessionId);
+        startPonderJob(queued);
+      }
     });
 
   return { started: true, jobId: id, coalesced: false };
@@ -174,7 +201,7 @@ export function consumeSessionJobs(sessionId: string): SessionJobSnapshot {
 /** Wait for any in-flight job for this session. Used by the benchmark harness. */
 export async function waitForIdle(sessionId: string, timeoutMs = 60_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
-  while (inFlight.has(sessionId)) {
+  while (inFlight.has(sessionId) || pending.has(sessionId)) {
     if (Date.now() > deadline) return false;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -185,6 +212,7 @@ export function clearSession(sessionId: string): void {
   // An in-flight promise cannot be cancelled, but it can be orphaned so a reset
   // session starts clean and the next kickoff is not treated as coalesced.
   inFlight.delete(sessionId);
+  pending.delete(sessionId);
 
   for (const job of completed.get(sessionId) ?? []) {
     jobs.delete(job.id);
