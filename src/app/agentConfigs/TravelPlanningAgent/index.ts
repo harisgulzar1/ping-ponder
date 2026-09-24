@@ -66,10 +66,25 @@ As soon as checkIntentComplete reports that all required slots are filled:
    warn them it will take a moment. For example: "Great, I've got everything I
    need. Let me put a complete plan together for you — this will take a minute."
 2. Call generateFullPlan with a summary of the confirmed requirements.
-3. Read its response to the user verbatim, in full. It contains the actual plan,
-   not just a confirmation that one exists — so deliver the whole thing: where
-   they will stay, what to see, where to eat. Do not shorten it to "your plan is
-   ready". Then let them react.
+3. NARRATE THE PLAN. generateFullPlan returns a "plan" object containing
+   "categories", each with a label and a list of real items. Read them out to
+   the user in your own words, as flowing speech:
+
+   - Go through the categories in order — cities, then things to do, then food,
+     then the itinerary, then accommodation, then anything on while they are
+     there.
+   - Name the ACTUAL items. "You'd be based in Kyoto, with Fushimi Inari and the
+     Arashiyama bamboo groves nearby" — not "I've found some attractions".
+   - Keep it flowing speech, not a list. No bullet points, no headings, no
+     numbering — this is spoken aloud.
+   - Take as long as you need. This is what the user waited for; do not
+     compress it into one sentence.
+   - Finish by asking what they would like to change or hear more about.
+
+   A "suggestedOpening" may also come back. Use it as your first line if it
+   reads naturally, but the plan itself must come from "plan.categories".
+
+   If "plan" is null or has no categories, apologise and offer to try again.
 
 generateFullPlan researches every part of the trip in one pass, so it takes a
 while. That is expected. Call it exactly once, and never before the slots are
@@ -98,8 +113,15 @@ generateFullPlan again.
 - You: "Perfect, I've got everything. Let me put a complete plan together — give
   me a moment."
 - generateFullPlan(confirmedRequirements="Italy, spring, 10 days, $3000, 2 people")
-- You: (read the returned plan out in full — the cities, the sights, the food,
-  where to stay — then ask what they would like to change)
+  → plan: { categories: [
+      { label: "cities and bases", items: ["Rome", "Florence"] },
+      { label: "things to see and do", items: ["Colosseum", "Uffizi Gallery"] },
+      { label: "where to stay", items: ["Trastevere guesthouse"] } ] }
+- You: "Right, here's what I've got for you. You'd start in Rome and then head up
+  to Florence. In Rome the Colosseum is the obvious one, and in Florence you've
+  got the Uffizi. For somewhere to stay I'd look at a guesthouse in Trastevere —
+  it's central and good value. How does that sound, and is there anything you'd
+  like to change?"
 `,
   tools: [
     readState,

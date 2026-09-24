@@ -24,9 +24,11 @@ import {
 import * as store from './stateStore';
 import {
   deriveState,
+  INTENT_SLOT_NAMES,
   PLAN_CATEGORIES,
   PLAN_MIN_ITEMS,
   type PlanCategory,
+  type TravelState,
 } from './stateTypes';
 import { record } from '@/app/lib/metrics';
 
@@ -111,18 +113,14 @@ Build the ENTIRE plan in this one run:
 4. If the lookup DB has nothing for this destination, use webSearch.
 5. Call updatePhase to move to plan_sharing.
 
-Only then, write what the speech agent will read out VERBATIM. The user has been
-sitting in silence waiting for this, so actually DELIVER the plan -- do not
-merely announce that it is ready:
+Then stop. Do NOT write out the plan in prose -- the speech agent narrates it
+directly from state, so anything you write here is duplicated effort and would
+miss items added after you finish.
 
-- Walk them through it naturally: where they will be based, a few things to do,
-  somewhere to eat, where to stay, and anything time-sensitive.
-- Name the specific items you just added to the plan. Never say "I've put
-  together some options" without saying what they are.
-- Five to eight sentences of spoken prose. No bulleted lists, no headings, no
-  markdown -- this is read aloud.
-- Finish by inviting a reaction: ask whether they want to change anything or
-  hear more about any part of it.
+Close with a single short sentence the speech agent can open on, naming the
+destination and the overall shape of the trip. One sentence, spoken style, no
+lists. For example: "Here's a ten-day Italy trip built around Rome and
+Florence." 
 ${SHARED_DOMAIN_RULES}`;
 
 // ---------------------------------------------------------------------------
@@ -607,13 +605,58 @@ export interface PonderRequest {
   metricsSessionId?: string;
 }
 
+/** Speech-ready view of the finished plan, built from state. */
+export interface PlanSummary {
+  requirements: Array<{ label: string; value: string }>;
+  categories: Array<{ category: PlanCategory; label: string; items: string[] }>;
+  itemCount: number;
+}
+
 export interface PonderResult {
   text: string;
+  /**
+   * The plan as it actually stands after the run.
+   *
+   * The model's closing prose is not a reliable narration source: the
+   * deterministic `autoPopulatePlan` sweep runs *after* the tool loop, so
+   * anything it adds the model never saw and would never mention. Reading the
+   * final state instead means the speech agent narrates what is really there.
+   */
+  plan: PlanSummary;
   durationMs: number;
   toolCalls: string[];
   planItemsAdded: number;
   stateVersion: number;
   error?: string;
+}
+
+const CATEGORY_LABELS: Record<PlanCategory, string> = {
+  cities: 'cities and bases',
+  attractions: 'things to see and do',
+  food: 'food and drink',
+  itinerary: 'suggested itinerary',
+  accommodation: 'where to stay',
+  events: "what's on while they are there",
+  other: 'other notes',
+};
+
+function buildPlanSummary(state: TravelState): PlanSummary {
+  const requirements = INTENT_SLOT_NAMES.map((name) => ({
+    label: name,
+    value: state.intent_clarification[name]?.value ?? '',
+  })).filter((entry) => entry.value.length > 0);
+
+  const categories = PLAN_CATEGORIES.map((category) => ({
+    category,
+    label: CATEGORY_LABELS[category],
+    items: (state.plan_sharing[category] ?? []).map((item) => item.value),
+  })).filter((group) => group.items.length > 0);
+
+  return {
+    requirements,
+    categories,
+    itemCount: categories.reduce((total, group) => total + group.items.length, 0),
+  };
 }
 
 function extractText(output: any[]): string {
@@ -782,8 +825,15 @@ export async function runPonder(request: PonderRequest): Promise<PonderResult> {
     });
   }
 
+  // In bulk mode the speech agent narrates from `plan`, so an empty string is
+  // correct here -- far better than it reading "Updated the plan in the
+  // background" aloud to someone who just waited a minute for their itinerary.
+  const fallbackText =
+    failure || mode === 'bulk' ? '' : 'Updated the plan in the background.';
+
   return {
-    text: text || (failure ? '' : 'Updated the plan in the background.'),
+    text: text || fallbackText,
+    plan: buildPlanSummary(afterState),
     durationMs,
     toolCalls,
     planItemsAdded,

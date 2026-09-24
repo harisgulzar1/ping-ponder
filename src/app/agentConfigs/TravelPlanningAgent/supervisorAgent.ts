@@ -23,7 +23,7 @@ import {
 export const generateFullPlan = tool({
   name: 'generateFullPlan',
   description:
-    'Hand the entire conversation to the planning agent to build the complete travel plan in one go. BLOCKS until the whole plan is built -- every category, every lookup -- so it takes a long time. Call it exactly once, only after every required slot is confirmed. Returns the words to read to the user.',
+    'Hand the entire conversation to the planning agent to build the complete travel plan in one go. BLOCKS until the whole plan is built -- every category, every lookup -- so it takes a long time. Call it exactly once, only after every required slot is confirmed. Returns the finished plan for you to narrate to the user.',
   parameters: {
     type: 'object',
     properties: {
@@ -61,8 +61,9 @@ export const generateFullPlan = tool({
 
       if (!response.ok) {
         return {
-          nextResponse:
-            "I'm having trouble putting the plan together right now. Could we try that again in a moment?",
+          plan: null,
+          instruction:
+            'Planning failed. Apologise briefly and offer to try again.',
         };
       }
 
@@ -75,21 +76,25 @@ export const generateFullPlan = tool({
         planItemsAdded: data.planItemsAdded,
       });
 
-      if (!data.nextResponse) {
-        return {
-          nextResponse:
-            "I've put some ideas together. Would you like me to walk you through them?",
-        };
-      }
-
-      return { nextResponse: data.nextResponse as string };
+      // `plan` is the authoritative content: it is read from state after every
+      // item has landed, whereas `nextResponse` is only whatever prose the
+      // planner happened to end on. Ping narrates from `plan`.
+      return {
+        plan: data.plan ?? { requirements: [], categories: [], itemCount: 0 },
+        suggestedOpening: (data.nextResponse as string) || '',
+        instruction:
+          'The plan is ready. Narrate it to the user now, out loud, in your own ' +
+          'words: walk through each category in `plan.categories` naming the ' +
+          'actual items, then ask what they would like to change. Do not just ' +
+          'say the plan is ready.',
+      };
     } catch (error) {
       breadcrumb?.('[ponder:bulk] request failed', {
         error: error instanceof Error ? error.message : String(error),
       });
       return {
-        nextResponse:
-          'Sorry, I hit a snag building the plan. Shall I try that once more?',
+        plan: null,
+        instruction: 'Planning failed. Apologise briefly and offer to try again.',
       };
     }
   },

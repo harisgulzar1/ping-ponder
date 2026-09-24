@@ -88,6 +88,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       mode,
       nextResponse: result.text,
+      plan: result.plan,
       durationMs: result.durationMs,
       toolCalls: result.toolCalls,
       planItemsAdded: result.planItemsAdded,
