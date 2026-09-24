@@ -7,6 +7,12 @@ local machine against the OpenAI Realtime and Responses APIs. The user plans a
 trip to Africa by voice; the only thing that differs between the two runs is
 whether the reasoning agent blocks the speech agent or runs alongside it.
 
+> **Note:** these figures were captured against the earlier baseline, which
+> blocked on the planner once per turn rather than handing off in a single
+> batch at the end. The current baseline concentrates its cost into one long
+> pause, so a fresh capture will show a different — and starker — shape,
+> especially in *longest wait*. Re-record before quoting these numbers.
+
 **The parallel pipeline answered 1.53× faster on average** — 6.07s versus 9.27s
 from the end of the user's sentence to a finished answer, a saving of 3.20s per
 turn (34.6% reduction). That is an end-to-end figure: it includes the reasoning
@@ -79,16 +85,28 @@ Pick between them with the **Scenario** dropdown.
 
 ### `travelPlanning` — sequential (the baseline)
 
+Two strictly separated stages: collect everything, then plan everything.
+
 ```
-user speaks ──► Ping ──► "let me check that for you"
-                 │
-                 └──► Ponder (model + tool loop) ─────────┐  user waits
-                                                          │
-                      Ping speaks Ponder's words ◄────────┘
+STAGE 1 — collect (fast; no planning happens at all)
+  user speaks ──► Ping ──► updateSlot ──► asks for the next missing slot
+  ... repeated until destination, when, duration, budget, people are confirmed
+
+STAGE 2 — hand off (one long silence)
+  Ping ──► generateFullPlan ──► Ponder plans EVERYTHING in one pass ──┐
+                                cities, attractions, food, itinerary,  │ user
+                                accommodation, events                  │ waits
+           Ping reads Ponder's summary ◄───────────────────────────────┘
 ```
 
-Ping cannot say anything substantive until Ponder returns the words to say.
-Every millisecond of reasoning lands on the user.
+Nothing is researched while the user is still talking. The planner starts only
+once every requirement is in, and then has to run every lookup for every
+category in a single pass — so the entire cost of planning arrives as one long
+pause at the end, after which the finished plan appears all at once.
+
+This is how a naive two-agent split actually behaves, and it is the honest
+control: the same total reasoning as the parallel arm, just all of it dumped on
+the user at the end.
 
 ### `fastTravelPlanning` — parallel
 
@@ -105,7 +123,9 @@ user speaks ──► Ping ──► updateSlot ─┬─► records the slot
 ```
 
 Ping never waits. Ponder's latency is absorbed into the time the user spends
-thinking and talking.
+thinking and talking, and because findings surface turn by turn the user gets to
+react to them *during* the conversation — so by the time the last slot is filled
+the plan is not only built but largely already confirmed.
 
 `updateSlot` deliberately does all three jobs in one call. Each extra tool call
 costs a model turn plus a round trip *before Ping can speak*, so splitting this
@@ -147,13 +167,13 @@ concurrently, and `addPlanItem` is a read-modify-write.
 (`response.done`). Measured in the browser, since it spans WebRTC events.
 
 **Why not time-to-first-response?** Because it would hide the entire effect. The
-sequential agent is *designed* to say "let me check that for you" before it
-blocks on Ponder. So first response is fast in both pipelines — around a second
-either way — while the sequential user then sits through four more seconds of
-silence before getting an actual answer. Time-to-first-response measures how
-quickly the agent starts making noise; time-to-answer measures how quickly the
-user can act. The second one is the claim. The panel shows both, first response
-first, because the pair is the honest picture.
+sequential agent announces the handoff — "let me put a complete plan together" —
+*before* it blocks, so it starts making noise promptly in both pipelines while
+the baseline user then sits through the whole plan build in silence.
+Time-to-first-response measures how quickly the agent starts making noise;
+time-to-answer measures how quickly the user can act. The second one is the
+claim. The panel shows both, first response first, because the pair is the
+honest picture.
 
 | Metric | Meaning |
 |---|---|
@@ -166,6 +186,12 @@ first, because the pair is the honest picture.
 If you report only one number, report `turn_completion`. If you report two,
 report both — the pair is the actual story: *comparable time to first sound,
 far shorter time to a usable answer.*
+
+**Watch the maximum, not just the mean.** The baseline is fast for most turns
+and then stalls once, hard, at the handoff. A mean spreads that single stall
+across every cheap collection turn and understates it; the *longest single wait*
+is where the architecture actually shows up, so the panel reports it per
+pipeline.
 
 **One subtlety worth knowing about**, because getting it wrong silently inverts
 the result: in the Realtime API a blocking tool call splits one conversational

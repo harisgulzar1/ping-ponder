@@ -7,36 +7,37 @@ import {
   resolveSessionId,
 } from './clientSession';
 
-// SEQUENTIAL BASELINE.
+// SEQUENTIAL BASELINE: collect everything, then hand off once.
 //
-// Ping hands the turn to Ponder and waits. The entire reasoning run -- model
-// call, tool loop, state writes -- happens before Ping can say anything
-// substantive, so Ponder's latency lands directly on the user.
+// This arm deliberately does NO planning during the conversation. Ping gathers
+// the slots -- destination, dates, duration, budget, party size -- and only when
+// they are all in does it hand the whole conversation to the planning agent and
+// wait. That handoff has to do every lookup for every category in one go, so it
+// is a single long silence rather than latency spread thinly across turns.
 //
-// This is the arm the parallel pipeline is measured against. The reasoning
-// itself now lives server-side in ./ponder.ts; this file is just the client
-// stub that blocks on it.
+// That concentration is the point. It is how a naive two-agent split actually
+// behaves, and it is what the parallel pipeline is measured against: the same
+// total reasoning, either dumped on the user at the end or hidden inside the
+// time they were already spending talking.
 
-export const getNextResponseFromSupervisor = tool({
-  name: 'getNextResponseFromSupervisor',
+export const generateFullPlan = tool({
+  name: 'generateFullPlan',
   description:
-    'Ask the supervisor agent what to say next. Returns the exact words to read to the user. Blocks until the supervisor has finished reasoning.',
+    'Hand the entire conversation to the planning agent to build the complete travel plan in one go. BLOCKS until the whole plan is built -- every category, every lookup -- so it takes a long time. Call it exactly once, only after every required slot is confirmed. Returns the words to read to the user.',
   parameters: {
     type: 'object',
     properties: {
-      relevantContextFromLastUserMessage: {
+      confirmedRequirements: {
         type: 'string',
         description:
-          'Key information from the most recent user message. The supervisor may not see that message otherwise. Empty string is fine if it added nothing.',
+          'A short summary of everything the user has confirmed: destination, timing, duration, budget and party size.',
       },
     },
-    required: ['relevantContextFromLastUserMessage'],
+    required: ['confirmedRequirements'],
     additionalProperties: false,
   },
   execute: async (input, details) => {
-    const { relevantContextFromLastUserMessage } = input as {
-      relevantContextFromLastUserMessage: string;
-    };
+    const { confirmedRequirements } = input as { confirmedRequirements: string };
 
     const sessionId = resolveSessionId(details);
     const scenario = resolveScenario(details);
@@ -52,23 +53,23 @@ export const getNextResponseFromSupervisor = tool({
         body: JSON.stringify({
           sessionId,
           scenario,
-          mode: 'sync',
+          mode: 'bulk',
           history,
-          relevantContext: relevantContextFromLastUserMessage,
+          relevantContext: confirmedRequirements,
         }),
       });
 
       if (!response.ok) {
         return {
           nextResponse:
-            "I'm having trouble looking that up right now. Could you say that again?",
+            "I'm having trouble putting the plan together right now. Could we try that again in a moment?",
         };
       }
 
       const data = await response.json();
       const waitedMs = Date.now() - startedAt;
 
-      breadcrumb?.(`[ponder:sync] blocked Ping for ${waitedMs}ms`, {
+      breadcrumb?.(`[ponder:bulk] blocked Ping for ${waitedMs}ms building the whole plan`, {
         ponderDurationMs: data.durationMs,
         toolCalls: data.toolCalls,
         planItemsAdded: data.planItemsAdded,
@@ -77,20 +78,21 @@ export const getNextResponseFromSupervisor = tool({
       if (!data.nextResponse) {
         return {
           nextResponse:
-            "I didn't quite get that sorted. Could you tell me a bit more about what you're after?",
+            "I've put some ideas together. Would you like me to walk you through them?",
         };
       }
 
       return { nextResponse: data.nextResponse as string };
     } catch (error) {
-      breadcrumb?.('[ponder:sync] request failed', {
+      breadcrumb?.('[ponder:bulk] request failed', {
         error: error instanceof Error ? error.message : String(error),
       });
       return {
-        nextResponse: "Sorry, I hit a snag looking that up. What else can I help you with?",
+        nextResponse:
+          'Sorry, I hit a snag building the plan. Shall I try that once more?',
       };
     }
   },
 });
 
-export default getNextResponseFromSupervisor;
+export default generateFullPlan;

@@ -97,18 +97,16 @@ async function runSequentialArm(
   const startedAt = Date.now();
   const turns: TurnResult[] = [];
 
+  // Stage 1 -- collection. The baseline does no planning at all while it
+  // gathers requirements, so these turns are cheap: the user waits only for
+  // Ping to speak.
   for (let i = 0; i < script.length; i += 1) {
     const turnStart = Date.now();
 
-    // The sequential pipeline blocks Ping on the whole reasoning run.
-    const result = await runPonder({
-      sessionId,
-      metricsSessionId,
-      scenario,
-      mode: 'sync',
-      history: buildHistory(script, i),
-      relevantContext: script[i],
-    });
+    const slotForTurn = inferSlot(script[i]);
+    if (slotForTurn) {
+      await store.updateSlot(sessionId, slotForTurn.name, slotForTurn.value, 'confirmed', 'ping');
+    }
 
     const blockingMs = Date.now() - turnStart;
     const { derived } = await store.readDerived(sessionId);
@@ -119,7 +117,7 @@ async function runSequentialArm(
       blockingMs,
       totalUserFacingMs: pingResponseMs + blockingMs,
       planItemCount: derived.planItemCount,
-      note: result.error ? `ponder error: ${result.error}` : `${result.toolCalls.length} tool calls`,
+      note: 'collecting requirements -- no planning yet',
     });
 
     record({
@@ -129,7 +127,49 @@ async function runSequentialArm(
       scenario,
       kind: 'benchmark_turn',
       ms: pingResponseMs + blockingMs,
-      detail: { turn: i + 1, blockingMs, pingResponseMs, arm: 'sequential' },
+      detail: { turn: i + 1, blockingMs, pingResponseMs, arm: 'sequential', stage: 'collect' },
+    });
+  }
+
+  // Stage 2 -- the handoff. Everything is planned at once, in one blocking
+  // run, while the user sits in silence. This single turn is the baseline's
+  // entire cost, and it is what the parallel pipeline removes.
+  const handoffStart = Date.now();
+  const result = await runPonder({
+    sessionId,
+    metricsSessionId,
+    scenario,
+    mode: 'bulk',
+    history: buildHistory(script, script.length),
+    relevantContext: script.join('; '),
+  });
+  const handoffMs = Date.now() - handoffStart;
+
+  {
+    const { derived } = await store.readDerived(sessionId);
+    turns.push({
+      turn: script.length + 1,
+      userMessage: '(all requirements collected -- handing off to the planner)',
+      blockingMs: handoffMs,
+      totalUserFacingMs: pingResponseMs + handoffMs,
+      planItemCount: derived.planItemCount,
+      note: result.error
+        ? `ponder error: ${result.error}`
+        : `bulk plan build, ${result.toolCalls.length} tool calls`,
+    });
+
+    record({
+      sessionId: metricsSessionId,
+      scenario,
+      kind: 'benchmark_turn',
+      ms: pingResponseMs + handoffMs,
+      detail: {
+        turn: script.length + 1,
+        blockingMs: handoffMs,
+        pingResponseMs,
+        arm: 'sequential',
+        stage: 'handoff',
+      },
     });
   }
 

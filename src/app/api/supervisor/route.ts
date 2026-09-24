@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { runPonder, type PonderHistoryItem } from '@/app/agentConfigs/TravelPlanningAgent/ponder';
+import {
+  runPonder,
+  type PonderHistoryItem,
+  type PonderMode,
+} from '@/app/agentConfigs/TravelPlanningAgent/ponder';
 import { consumeSessionJobs, isBusy, startPonderJob } from '@/app/agentConfigs/TravelPlanningAgent/jobs';
 import { record } from '@/app/lib/metrics';
 
@@ -9,13 +13,14 @@ export const dynamic = 'force-dynamic';
 
 /**
  * POST /api/supervisor
- * Body: { sessionId, scenario, mode: 'sync' | 'async', history, relevantContext }
+ * Body: { sessionId, scenario, mode: 'sync' | 'async' | 'bulk', history, relevantContext }
  *
- * mode 'sync'  -- sequential baseline. Blocks for the full reasoning run and
- *                 returns prose for Ping to speak. Ponder latency lands
- *                 directly on the user.
+ * mode 'sync'  -- one short blocking answer for a single turn.
  * mode 'async' -- parallel pipeline. Starts a background job and returns in a
  *                 few milliseconds. Ping answers from state instead of waiting.
+ * mode 'bulk'  -- sequential baseline. Builds the ENTIRE plan in one blocking
+ *                 run once all slots are collected. This is the single long
+ *                 silence the parallel pipeline exists to eliminate.
  */
 export async function POST(request: NextRequest) {
   const receivedAt = Date.now();
@@ -24,7 +29,9 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const sessionId: string = body?.sessionId || 'default';
     const scenario: string = body?.scenario || 'travelPlanning';
-    const mode: 'sync' | 'async' = body?.mode === 'async' ? 'async' : 'sync';
+    const requested = body?.mode;
+    const mode: PonderMode =
+      requested === 'async' || requested === 'bulk' ? requested : 'sync';
     const relevantContext: string = body?.relevantContext ?? '';
 
     const history: PonderHistoryItem[] = Array.isArray(body?.history)
@@ -70,13 +77,13 @@ export async function POST(request: NextRequest) {
     const result = await runPonder({
       sessionId,
       scenario,
-      mode: 'sync',
+      mode,
       history,
       relevantContext,
     });
 
     return NextResponse.json({
-      mode: 'sync',
+      mode,
       nextResponse: result.text,
       durationMs: result.durationMs,
       toolCalls: result.toolCalls,

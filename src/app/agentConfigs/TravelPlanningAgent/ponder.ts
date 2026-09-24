@@ -47,6 +47,13 @@ const SIMULATED_SEARCH_LATENCY_MS = Number(
 /** Hard stop on the reasoning loop so a confused model cannot spin forever. */
 const MAX_TOOL_ITERATIONS = 8;
 
+/**
+ * Bulk mode has to fill every plan category in a single run, which is several
+ * times more tool calls than answering one turn. Capping it at 8 would truncate
+ * the plan and make the baseline look artificially quick.
+ */
+const MAX_TOOL_ITERATIONS_BULK = 20;
+
 let client: OpenAI | null = null;
 function openai(): OpenAI {
   if (!client) {
@@ -101,6 +108,24 @@ Your job is to make state as complete as possible, as fast as possible:
 
 Finish with one short sentence summarizing what you added. Do not address the
 user directly and do not ask questions -- Ping owns the conversation.
+${SHARED_DOMAIN_RULES}`;
+
+const BULK_INSTRUCTIONS = `You are the Ponder agent, and the conversation has just been handed to you
+WHOLESALE. The speech agent has finished collecting the user's requirements and
+is now silent, waiting for you. The user hears nothing until you return.
+
+Build the ENTIRE plan in this one run:
+1. readState to see the confirmed requirements.
+2. Call getPlanGaps, then lookup tools for EVERY thin category: cities,
+   attractions, food, itinerary, accommodation, events. Do not skip any.
+3. Write every finding with addPlanItem(status="proposed"). Aim for at least
+   3 attractions, 2 food, 2 accommodation, 1 city, 1 itinerary, 1 event.
+4. If the lookup DB has nothing for this destination, use webSearch.
+5. Call updatePhase to move to plan_sharing.
+
+Only then, finish with what the speech agent will read out VERBATIM: two or
+three sentences of natural prose, no bulleted lists, naming a few highlights and
+summarizing the rest.
 ${SHARED_DOMAIN_RULES}`;
 
 // ---------------------------------------------------------------------------
@@ -563,10 +588,19 @@ export interface PonderHistoryItem {
   content: string;
 }
 
+/**
+ * 'sync'  -- per-turn blocking. Ping waits for one short answer.
+ * 'async' -- background. Ping does not wait at all.
+ * 'bulk'  -- the sequential baseline's single deferred handoff: build the whole
+ *            plan at once while the user sits in silence. This is the long
+ *            pause the parallel pipeline exists to remove.
+ */
+export type PonderMode = 'sync' | 'async' | 'bulk';
+
 export interface PonderRequest {
   sessionId: string;
   scenario: string;
-  mode: 'sync' | 'async';
+  mode: PonderMode;
   history?: PonderHistoryItem[];
   relevantContext?: string;
   /**
@@ -626,7 +660,12 @@ export async function runPonder(request: PonderRequest): Promise<PonderResult> {
     {
       type: 'message',
       role: 'system',
-      content: mode === 'sync' ? SYNC_INSTRUCTIONS : ASYNC_INSTRUCTIONS,
+      content:
+        mode === 'bulk'
+          ? BULK_INSTRUCTIONS
+          : mode === 'sync'
+            ? SYNC_INSTRUCTIONS
+            : ASYNC_INSTRUCTIONS,
     },
     {
       type: 'message',
@@ -656,7 +695,10 @@ export async function runPonder(request: PonderRequest): Promise<PonderResult> {
       stream: false,
     } as any);
 
-    for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration += 1) {
+    const maxIterations =
+      mode === 'bulk' ? MAX_TOOL_ITERATIONS_BULK : MAX_TOOL_ITERATIONS;
+
+    for (let iteration = 0; iteration < maxIterations; iteration += 1) {
       const output: any[] = response?.output ?? [];
       const calls = output.filter((item) => item?.type === 'function_call');
 
@@ -705,7 +747,7 @@ export async function runPonder(request: PonderRequest): Promise<PonderResult> {
       } as any);
 
       // Loop exhausted without the model settling on a final message.
-      if (iteration === MAX_TOOL_ITERATIONS - 1) {
+      if (iteration === maxIterations - 1) {
         text = extractText(response?.output ?? []);
       }
     }

@@ -372,6 +372,15 @@ const LatencyPanel: React.FC<LatencyPanelProps> = ({
                 <dd className="tabular-nums text-right">{fmtMs(bucket?.turnCompletion?.p95)}</dd>
                 <dt
                   style={{ color: TEXT_SECONDARY }}
+                  title="The single longest pause the user sat through. The sequential baseline collects requirements quickly and then stalls once, for a long time, while it plans everything at once -- a mean hides that; this does not."
+                >
+                  longest wait
+                </dt>
+                <dd className="tabular-nums text-right font-medium">
+                  {fmtMs(bucket?.turnCompletion?.max)}
+                </dd>
+                <dt
+                  style={{ color: TEXT_SECONDARY }}
                   title="Time from the end of your sentence to the agent starting to reply. Fast in both arms: the sequential agent opens with a filler phrase before it blocks. Tracked to confirm the parallel pipeline does not regress it."
                 >
                   first response
@@ -394,6 +403,19 @@ const LatencyPanel: React.FC<LatencyPanelProps> = ({
           );
         })}
       </div>
+
+      {(() => {
+        const seqMax = summary?.byPipeline.sequential.turnCompletion?.max;
+        const parMax = summary?.byPipeline.parallel.turnCompletion?.max;
+        if (!seqMax || !parMax || seqMax <= parMax) return null;
+        return (
+          <p className="text-[11px] mb-2" style={{ color: TEXT_SECONDARY }}>
+            Worst single pause: {fmtMs(seqMax)} sequential vs {fmtMs(parMax)}{' '}
+            parallel. The baseline spends it all in one silence while it plans
+            everything at once.
+          </p>
+        );
+      })()}
 
       {parallel?.ponderRun && parallel.ponderRun.mean > 0 && (
         <p className="text-[11px] mb-2" style={{ color: TEXT_SECONDARY }}>
