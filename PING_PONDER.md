@@ -1,5 +1,13 @@
 # Ping / Ponder: parallel vs sequential voice-agent pipelines
 
+## Watch the demo
+
+[![Ping / Ponder — parallel vs sequential voice-agent pipelines, video walkthrough](https://img.youtube.com/vi/XuQU_sywyA8/maxresdefault.jpg)](https://youtu.be/XuQU_sywyA8)
+
+**▶ [Watch on YouTube](https://youtu.be/XuQU_sywyA8)** — a recorded walkthrough
+of both pipelines, showing the plan filling in during the conversation on the
+parallel side and arriving all at once on the sequential side.
+
 ## Demo
 
 The same travel-planning conversation, run live through both pipelines on a
