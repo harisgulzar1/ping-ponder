@@ -8,12 +8,15 @@ interface RobotAvatarProps {
   isSpeaking?: boolean;
   state?: "idle" | "listening" | "thinking" | "speaking";
   toggleSpeed?: number;
+  /** Rendered width/height in px. The side panel uses a compact size. */
+  size?: number;
 }
 
 export const RobotAvatar: React.FC<RobotAvatarProps> = ({
   isSpeaking = false,
   state = "idle",
   toggleSpeed = 200,
+  size = 210,
 }) => {
   const [currentImage, setCurrentImage] = useState<"moving" | "still">("moving");
 
@@ -50,8 +53,8 @@ export const RobotAvatar: React.FC<RobotAvatarProps> = ({
     <div className="flex flex-col items-center gap-3">
       <div
         style={{
-          width: "210px",
-          height: "210px",
+          width: `${size}px`,
+          height: `${size}px`,
           position: "relative",
           display: "flex",
           alignItems: "center",

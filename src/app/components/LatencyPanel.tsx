@@ -58,6 +58,12 @@ interface LatencyPanelProps {
 }
 
 type Pipeline = 'sequential' | 'parallel';
+type StatKey = 'turnCompletion' | 'turnLatency';
+interface Bar {
+  pipeline: Pipeline;
+  value: number;
+  n: number;
+}
 
 const fmtMs = (ms: number | null | undefined) =>
   ms === null || ms === undefined ? '--' : ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${Math.round(ms)}ms`;
@@ -72,7 +78,9 @@ const LatencyPanel: React.FC<LatencyPanelProps> = ({
   const [showTable, setShowTable] = useState(false);
   const [benchRunning, setBenchRunning] = useState(false);
   const [benchResult, setBenchResult] = useState<string | null>(null);
-  const [hovered, setHovered] = useState<Pipeline | null>(null);
+  // Scoped as `${groupId}:${pipeline}` so hovering one chart does not
+  // highlight the matching bar in the other.
+  const [hovered, setHovered] = useState<string | null>(null);
   const inFlightRef = useRef(false);
 
   const fetchSummary = useCallback(async () => {
@@ -147,27 +155,110 @@ const LatencyPanel: React.FC<LatencyPanelProps> = ({
     void fetchSummary();
   };
 
-  const sequential = summary?.byPipeline.sequential;
   const parallel = summary?.byPipeline.parallel;
   const comparison = summary?.comparison ?? null;
 
-  const bars: Array<{ pipeline: Pipeline; value: number; n: number }> = [];
-  if (sequential?.turnCompletion)
-    bars.push({
-      pipeline: 'sequential',
-      value: sequential.turnCompletion.mean,
-      n: sequential.turns,
+  const buildBars = (statKey: StatKey): Bar[] => {
+    const out: Bar[] = [];
+    (['sequential', 'parallel'] as Pipeline[]).forEach((key) => {
+      const stats = summary?.byPipeline[key]?.[statKey];
+      if (stats) out.push({ pipeline: key, value: stats.mean, n: stats.count });
     });
-  if (parallel?.turnCompletion)
-    bars.push({ pipeline: 'parallel', value: parallel.turnCompletion.mean, n: parallel.turns });
+    return out;
+  };
 
-  const axisMax = Math.max(1, ...bars.map((b) => b.value)) * 1.15;
+  const firstResponseBars = buildBars('turnLatency');
+  const answerBars = buildBars('turnCompletion');
   const activePipeline: Pipeline | null =
     scenario === 'fastTravelPlanning'
       ? 'parallel'
       : scenario === 'travelPlanning'
         ? 'sequential'
         : null;
+
+  const renderBarGroup = (
+    heading: string,
+    subtitle: string,
+    bars: Bar[],
+    statKey: StatKey,
+    groupId: string,
+  ) => {
+    if (bars.length === 0) return null;
+    const axisMax = Math.max(1, ...bars.map((b) => b.value)) * 1.15;
+
+    return (
+      <div className="mb-3">
+        <p className="text-xs font-medium" style={{ color: TEXT_PRIMARY }}>
+          {heading}
+        </p>
+        <p className="text-xs mb-2" style={{ color: TEXT_SECONDARY }}>
+          {subtitle}
+        </p>
+        <div className="flex flex-col gap-[2px]">
+          {bars.map((bar) => {
+            const pct = Math.max(2, (bar.value / axisMax) * 100);
+            const series = SERIES[bar.pipeline];
+            const hoverKey = `${groupId}:${bar.pipeline}`;
+            return (
+              <div
+                key={bar.pipeline}
+                className="relative flex items-center gap-2 group"
+                onMouseEnter={() => setHovered(hoverKey)}
+                onMouseLeave={() => setHovered(null)}
+              >
+                <span
+                  className="text-xs w-20 shrink-0 text-right"
+                  style={{ color: TEXT_SECONDARY }}
+                >
+                  {series.label}
+                </span>
+                <div className="flex-1 flex items-center gap-2 min-w-0">
+                  <div
+                    className="h-4 shrink-0"
+                    style={{
+                      width: `${pct}%`,
+                      backgroundColor: series.color,
+                      borderRadius: '0 4px 4px 0',
+                    }}
+                  />
+                  <span
+                    className="text-xs tabular-nums whitespace-nowrap"
+                    style={{ color: TEXT_PRIMARY }}
+                  >
+                    {fmtMs(bar.value)}
+                  </span>
+                </div>
+
+                {hovered === hoverKey && (
+                  <div
+                    className="absolute left-24 -top-1 z-10 px-2 py-1 rounded shadow-lg text-[11px] bg-white border"
+                    style={{ color: TEXT_PRIMARY }}
+                  >
+                    <div className="font-medium">{series.label} pipeline</div>
+                    <div style={{ color: TEXT_SECONDARY }}>
+                      mean {fmtMs(bar.value)} &middot; p50{' '}
+                      {fmtMs(summary?.byPipeline[bar.pipeline][statKey]?.p50)}{' '}
+                      &middot; p95{' '}
+                      {fmtMs(summary?.byPipeline[bar.pipeline][statKey]?.p95)}
+                    </div>
+                    <div style={{ color: TEXT_SECONDARY }}>{bar.n} turns measured</div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <div className="mt-1 ml-[88px] border-t" style={{ borderColor: AXIS }} />
+        <div
+          className="ml-[88px] flex justify-between text-[10px]"
+          style={{ color: TEXT_MUTED }}
+        >
+          <span>0</span>
+          <span>{fmtMs(axisMax)}</span>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div
@@ -219,72 +310,26 @@ const LatencyPanel: React.FC<LatencyPanelProps> = ({
         </p>
       )}
 
-      {/* Magnitude comparison. Two series, direct-labeled, legend below. */}
-      {bars.length > 0 && (
-        <div className="mb-3">
-          <p className="text-xs mb-2" style={{ color: TEXT_SECONDARY }}>
-            Mean time from end of your sentence to a finished answer
-          </p>
-          <div className="flex flex-col gap-[2px]">
-            {bars.map((bar) => {
-              const pct = Math.max(2, (bar.value / axisMax) * 100);
-              const series = SERIES[bar.pipeline];
-              return (
-                <div
-                  key={bar.pipeline}
-                  className="relative flex items-center gap-2 group"
-                  onMouseEnter={() => setHovered(bar.pipeline)}
-                  onMouseLeave={() => setHovered(null)}
-                >
-                  <span
-                    className="text-xs w-20 shrink-0 text-right"
-                    style={{ color: TEXT_SECONDARY }}
-                  >
-                    {series.label}
-                  </span>
-                  <div className="flex-1 flex items-center gap-2 min-w-0">
-                    <div
-                      className="h-4 shrink-0"
-                      style={{
-                        width: `${pct}%`,
-                        backgroundColor: series.color,
-                        borderRadius: '0 4px 4px 0',
-                      }}
-                    />
-                    <span className="text-xs tabular-nums whitespace-nowrap" style={{ color: TEXT_PRIMARY }}>
-                      {fmtMs(bar.value)}
-                    </span>
-                  </div>
+      {/* Two magnitude comparisons: how fast the agent STARTS replying, then
+          how fast it finishes. Both direct-labeled, shared legend below. */}
+      {renderBarGroup(
+        'Time to first response',
+        'Mean time from end of your sentence to the agent starting to reply',
+        firstResponseBars,
+        'turnLatency',
+        'first',
+      )}
 
-                  {hovered === bar.pipeline && (
-                    <div
-                      className="absolute left-24 -top-1 z-10 px-2 py-1 rounded shadow-lg text-[11px] bg-white border"
-                      style={{ color: TEXT_PRIMARY }}
-                    >
-                      <div className="font-medium">{series.label} pipeline</div>
-                      <div style={{ color: TEXT_SECONDARY }}>
-                        mean {fmtMs(bar.value)} &middot; p50{' '}
-                        {fmtMs(summary?.byPipeline[bar.pipeline].turnCompletion?.p50)}{' '}
-                        &middot; p95{' '}
-                        {fmtMs(summary?.byPipeline[bar.pipeline].turnCompletion?.p95)}
-                      </div>
-                      <div style={{ color: TEXT_SECONDARY }}>{bar.n} turns measured</div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          <div className="mt-1 ml-[88px] border-t" style={{ borderColor: AXIS }} />
-          <div className="ml-[88px] flex justify-between text-[10px]" style={{ color: TEXT_MUTED }}>
-            <span>0</span>
-            <span>{fmtMs(axisMax)}</span>
-          </div>
-        </div>
+      {renderBarGroup(
+        'Time to answer',
+        'Mean time from end of your sentence to a finished answer',
+        answerBars,
+        'turnCompletion',
+        'answer',
       )}
 
       {/* Legend -- always present for two or more series. */}
-      {bars.length > 1 && (
+      {answerBars.length > 1 && (
         <div className="flex items-center gap-3 mb-3 text-[11px]" style={{ color: TEXT_SECONDARY }}>
           {(Object.keys(SERIES) as Pipeline[]).map((key) => (
             <span key={key} className="flex items-center gap-1">
@@ -327,9 +372,9 @@ const LatencyPanel: React.FC<LatencyPanelProps> = ({
                 <dd className="tabular-nums text-right">{fmtMs(bucket?.turnCompletion?.p95)}</dd>
                 <dt
                   style={{ color: TEXT_SECONDARY }}
-                  title="Time to first audio. Fast in both arms: the sequential agent opens with a filler phrase. Tracked to confirm the parallel pipeline does not regress it."
+                  title="Time from the end of your sentence to the agent starting to reply. Fast in both arms: the sequential agent opens with a filler phrase before it blocks. Tracked to confirm the parallel pipeline does not regress it."
                 >
-                  first audio
+                  first response
                 </dt>
                 <dd className="tabular-nums text-right">{fmtMs(bucket?.turnLatency?.p50)}</dd>
                 <dt style={{ color: TEXT_SECONDARY }} title="Ponder reasoning time">

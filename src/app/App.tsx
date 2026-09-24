@@ -770,7 +770,7 @@ function App() {
           
         {/* Pipeline state and latency, for the travel planning scenarios only. */}
         {isTravelScenario && sessionStatus === "CONNECTED" && sessionId && (
-          <div className="mt-2 flex flex-col gap-2 max-h-[45%] overflow-y-auto">
+          <div className="mt-2 flex flex-col gap-2 max-h-[55%] overflow-y-auto">
             <ConversationStage sessionId={sessionId} />
             <LatencyPanel sessionId={sessionId} scenario={scenarioKey} />
           </div>
@@ -779,68 +779,67 @@ function App() {
         <aside
           className={`${
             isAvatarVisible
-              ? "w-1/2 opacity-100"
+              ? "w-64 shrink-0 opacity-100"
               : "w-0 opacity-0"
           } transition-all duration-200 ease-in-out overflow-hidden`}
         >
           {isAvatarVisible && (
-            <div className="h-full bg-white rounded-xl p-6 shadow flex flex-col gap-6 overflow-auto">
-              <div className="flex flex-col items-center gap-4">
+            <div className="h-full bg-white rounded-xl p-3 shadow flex flex-col gap-3 overflow-auto">
+              <div className="flex flex-col items-center gap-2">
                 <RobotAvatar
                   isSpeaking={isAssistantSpeaking}
                   state={avatarState}
                   toggleSpeed={200}
+                  size={120}
                 />
-                <div className="bg-slate-900 text-white px-6 py-3 rounded-lg text-center shadow-md">
-                  <div className="text-sm text-slate-200">Speaker</div>
-                  <div className="mt-1 text-2xl font-semibold tracking-wide">01</div>
+                <div className="bg-slate-900 text-white px-3 py-1.5 rounded-lg text-center shadow-md">
+                  <span className="text-[10px] text-slate-300 uppercase tracking-wide">Speaker</span>
+                  <span className="ml-2 text-base font-semibold tracking-wide">01</span>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4 text-sm text-slate-800">
-                <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg p-3">
-                  <span className="text-xl">🔌</span>
+              <div className="grid grid-cols-1 gap-1.5 text-xs text-slate-800">
+                <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5">
+                  <span className="text-base">🔌</span>
                   <div>
-                    <div className="text-xs uppercase tracking-wide text-slate-500">Connected</div>
-                    <div className="font-semibold">{sessionStatus === "CONNECTED" ? "Yes" : "No"}</div>
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Connected</div>
+                    <div className="font-semibold text-xs">{sessionStatus === "CONNECTED" ? "Yes" : "No"}</div>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg p-3">
-                  <span className="text-xl">🎤</span>
+                <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5">
+                  <span className="text-base">🎤</span>
                   <div>
-                    <div className="text-xs uppercase tracking-wide text-slate-500">Mode</div>
-                    <div className="font-semibold">{isPTTActive ? "Push to Talk" : "Voice Detection"}</div>
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Mode</div>
+                    <div className="font-semibold text-xs">{isPTTActive ? "Push to Talk" : "Voice Detection"}</div>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg p-3">
-                  <span className="text-xl">🤖</span>
+                <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5">
+                  <span className="text-base">🤖</span>
                   <div>
-                    <div className="text-xs uppercase tracking-wide text-slate-500">Avatar State</div>
-                    <div className="font-semibold capitalize">{avatarState}</div>
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Avatar State</div>
+                    <div className="font-semibold text-xs capitalize">{avatarState}</div>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg p-3">
-                  <span className="text-xl">🗣️</span>
+                <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5">
+                  <span className="text-base">🗣️</span>
                   <div>
-                    <div className="text-xs uppercase tracking-wide text-slate-500">Assistant Speaking</div>
-                    <div className="font-semibold">{isAssistantSpeaking ? "Yes" : "No"}</div>
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Assistant Speaking</div>
+                    <div className="font-semibold text-xs">{isAssistantSpeaking ? "Yes" : "No"}</div>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg p-3">
-                  <span className="text-xl">🎙️</span>
+                <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5">
+                  <span className="text-base">🎙️</span>
                   <div>
-                    <div className="text-xs uppercase tracking-wide text-slate-500">Recording</div>
-                    <div className="font-semibold">{isRecording ? "Active" : "Idle"}</div>
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Recording</div>
+                    <div className="font-semibold text-xs">{isRecording ? "Active" : "Idle"}</div>
                   </div>
                 </div>
               </div>
 
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-                <div className="text-base font-semibold text-slate-900 mb-2">Conversation Phase</div>
-                <p>
-                  Travel planning intent resolution details are shown in the transcript pane. The avatar reflects listening, thinking, and speaking states in real time.
-                </p>
-              </div>
+              <p className="text-[10px] leading-snug text-slate-500">
+                Intent and plan details appear in the transcript pane; the avatar
+                reflects listening, thinking and speaking state live.
+              </p>
             </div>
           )}
         </aside>

@@ -4,10 +4,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 // the browser -- they span WebRTC transport events -- so they are captured here
 // and posted to /api/metrics alongside the server-measured Ponder timings.
 //
-//   firstAudioMs  end of user speech -> first assistant audio frame.
-//   completionMs  end of user speech -> assistant done talking for this turn.
+//   firstResponseMs  end of user speech -> assistant starts replying.
+//   completionMs     end of user speech -> assistant done talking for this turn.
 //
-// completionMs is the headline number. firstAudioMs is fast in BOTH pipelines
+// completionMs is the headline number. firstResponseMs is fast in BOTH pipelines
 // because the sequential agent opens with a filler phrase ("let me check that
 // for you") and only then blocks on Ponder -- so measuring first audio alone
 // would hide the entire effect. Time-to-answer is what the user actually feels.
@@ -18,8 +18,20 @@ const TURN_START_EVENTS = new Set([
   'input_audio_buffer.committed',
 ]);
 
-/** Transport events that mean "the first audio is on its way out". */
+/**
+ * Transport events that mean "the assistant has started replying".
+ *
+ * Over WebRTC the audio itself travels on the media track, NOT the data
+ * channel, so `response.audio.delta` never arrives and this metric recorded
+ * nothing at all -- the panel showed "--" for both pipelines. The transcript
+ * deltas do come over the data channel, and they begin as the model starts
+ * speaking, so they are the usable signal for "the user is now hearing a
+ * reply". The audio events are kept for the WebSocket transport, where they
+ * do fire; whichever arrives first wins.
+ */
 const FIRST_OUTPUT_EVENTS = new Set([
+  'response.audio_transcript.delta',
+  'response.output_audio_transcript.delta',
   'response.audio.delta',
   'response.output_audio.delta',
   'response.output_audio.started',
@@ -55,8 +67,8 @@ const TURN_ABANDON_MS = 150_000;
 export interface TurnSample {
   /** End of user speech -> assistant done talking. The headline number. */
   completionMs: number;
-  /** End of user speech -> first assistant audio. Null if no audio was emitted. */
-  firstAudioMs: number | null;
+  /** End of user speech -> assistant starts replying. Null if it never did. */
+  firstResponseMs: number | null;
   /** How many responses the turn spanned. >1 means a blocking tool call. */
   responses: number;
   at: number;
@@ -76,7 +88,7 @@ export function useTurnLatency({
   maxPlausibleMs = 120_000,
 }: UseTurnLatencyOptions) {
   const turnStartRef = useRef<number | null>(null);
-  const firstAudioRef = useRef<number | null>(null);
+  const firstResponseRef = useRef<number | null>(null);
   const lastDoneAtRef = useRef<number | null>(null);
   const responseCountRef = useRef(0);
   const triggerRef = useRef<'voice' | 'text'>('voice');
@@ -126,19 +138,19 @@ export function useTurnLatency({
 
     const completionMs = doneAt - start;
     const responses = responseCountRef.current;
-    const firstAudioMs = firstAudioRef.current;
+    const firstResponseMs = firstResponseRef.current;
 
     if (completionMs < 0 || completionMs > maxPlausibleMs) return;
 
     post('turn_completion', completionMs, {
       trigger: triggerRef.current,
       responses,
-      firstAudioMs,
+      firstResponseMs,
     });
 
     const sample: TurnSample = {
       completionMs,
-      firstAudioMs,
+      firstResponseMs,
       responses,
       at: Date.now(),
       trigger: triggerRef.current,
@@ -155,7 +167,7 @@ export function useTurnLatency({
       }
       cancelSettle();
       turnStartRef.current = Date.now();
-      firstAudioRef.current = null;
+      firstResponseRef.current = null;
       lastDoneAtRef.current = null;
       responseCountRef.current = 0;
       triggerRef.current = trigger;
@@ -190,9 +202,9 @@ export function useTurnLatency({
 
       if (FIRST_OUTPUT_EVENTS.has(type)) {
         cancelSettle();
-        if (firstAudioRef.current !== null) return; // Only the first frame counts.
+        if (firstResponseRef.current !== null) return; // Only the first counts.
         const ms = Date.now() - turnStartRef.current;
-        firstAudioRef.current = ms;
+        firstResponseRef.current = ms;
         if (ms >= 0 && ms <= maxPlausibleMs) {
           post('turn_latency', ms, { trigger: triggerRef.current });
         }
@@ -235,7 +247,7 @@ export function useTurnLatency({
   const reset = useCallback(() => {
     cancelSettle();
     turnStartRef.current = null;
-    firstAudioRef.current = null;
+    firstResponseRef.current = null;
     lastDoneAtRef.current = null;
     responseCountRef.current = 0;
     setSamples([]);

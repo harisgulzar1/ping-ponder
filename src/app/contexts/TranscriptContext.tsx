@@ -44,7 +44,11 @@ export const TranscriptProvider: FC<PropsWithChildren> = ({ children }) => {
   const addTranscriptMessage: TranscriptContextValue["addTranscriptMessage"] = (itemId, role, text = "", isHidden = false) => {
     setTranscriptItems((prev) => {
       if (prev.some((log) => log.itemId === itemId && log.type === "MESSAGE")) {
-        console.warn(`[addTranscriptMessage] skipping; message already exists for itemId=${itemId}, role=${role}, text=${text}`);
+        // An empty text means "ensure this exists", which streaming deltas call
+        // on every chunk -- only a real duplicate insert is worth warning about.
+        if (text) {
+          console.warn(`[addTranscriptMessage] skipping; message already exists for itemId=${itemId}, role=${role}, text=${text}`);
+        }
         return prev;
       }
 

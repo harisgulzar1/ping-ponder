@@ -128,9 +128,15 @@ export function useHandleSessionHistory() {
   function handleTranscriptionDelta(item: any) {
     const itemId = item.item_id;
     const deltaText = item.delta || "";
-    if (itemId) {
-      updateTranscriptMessage(itemId, deltaText, true);
-    }
+    if (!itemId) return;
+
+    // These deltas carry the assistant's speech as it is spoken, and they can
+    // arrive before the SDK's history event has created the message. Because
+    // updateTranscriptMessage only maps over items that already exist, those
+    // early chunks were silently dropped and the bubble rendered empty for the
+    // whole turn. Creating it first makes the reply stream in live.
+    addTranscriptMessage(itemId, "assistant", "");
+    updateTranscriptMessage(itemId, deltaText, true);
   }
 
   function handleTranscriptionCompleted(item: any) {

@@ -26,7 +26,7 @@ confirmed — while the avatar panel reports connection and speaking state.
 ![Latency panel showing 1.53x faster to answer: sequential 9.27s versus parallel 6.07s](public/demo/latency%20overview.png)
 
 Mean time from the end of the user's sentence to a finished answer. This is the
-metric that matters: time-to-first-audio is deliberately fast in both arms,
+metric that matters: time-to-first-response is deliberately fast in both arms,
 because the sequential agent opens with a filler phrase before it blocks.
 
 ### Per-pipeline detail
@@ -146,18 +146,19 @@ concurrently, and `addPlanItem` is a read-modify-write.
 (`input_audio_buffer.speech_stopped`) to the assistant's turn being complete
 (`response.done`). Measured in the browser, since it spans WebRTC events.
 
-**Why not time-to-first-audio?** Because it would hide the entire effect. The
+**Why not time-to-first-response?** Because it would hide the entire effect. The
 sequential agent is *designed* to say "let me check that for you" before it
-blocks on Ponder. So first-audio is fast in both pipelines — around a second
+blocks on Ponder. So first response is fast in both pipelines — around a second
 either way — while the sequential user then sits through four more seconds of
-silence before getting an actual answer. Time-to-first-audio measures how
+silence before getting an actual answer. Time-to-first-response measures how
 quickly the agent starts making noise; time-to-answer measures how quickly the
-user can act. The second one is the claim.
+user can act. The second one is the claim. The panel shows both, first response
+first, because the pair is the honest picture.
 
 | Metric | Meaning |
 |---|---|
 | `turn_completion` | **headline.** End of user speech → answer finished |
-| `turn_latency` | end of user speech → first audio. Fast in both arms; tracked to prove the parallel pipeline doesn't regress it |
+| `turn_latency` | **time to first response.** End of user speech → the agent starts replying. Fast in both arms; tracked to prove the parallel pipeline doesn't regress it |
 | `ponder_run` | wall clock of a reasoning run — the cost the parallel pipeline hides |
 | `ponder_kickoff` | how long Ping was blocked handing work off (parallel only) |
 | `plan_items_added` | plan items a run produced |
